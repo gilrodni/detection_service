@@ -1,35 +1,70 @@
-"""Detection + auditing services."""
+"""Detection services plus persistence helpers."""
 
 from __future__ import annotations
 
 import json
 import logging
-from collections import deque
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
-from anyio import Lock
+from uuid import uuid4
+
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
+from sqlalchemy import insert, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import audit_logs_table
 from app.models import AuditLogEntry, DetectionRequest, TopicName
 
 logger = logging.getLogger("detection-service")
 
 
-class AuditLogStore:
-    """Simple in-memory audit log with a bounded size."""
+class AuditLogRepository:
+    """Persist audit logs using the Postgres backend."""
 
-    def __init__(self, max_entries: int = 500) -> None:
-        self._entries: deque[AuditLogEntry] = deque(maxlen=max_entries)
-        self._lock = Lock()
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
 
-    async def append(self, entry: AuditLogEntry) -> None:
-        async with self._lock:
-            self._entries.appendleft(entry)
+    async def record(
+        self, *, route: str, prompt: str, topics: list[TopicName]
+    ) -> AuditLogEntry:
+        timestamp = datetime.now(timezone.utc)
+        stmt = (
+            insert(audit_logs_table)
+            .values(
+                id=uuid4(),
+                timestamp=timestamp,
+                route=route,
+                prompt=prompt,
+                detected_topics=topics,
+            )
+            .returning(audit_logs_table)
+        )
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        row = result.mappings().one()
+        return AuditLogEntry(
+            timestamp=row["timestamp"],
+            route=row["route"],
+            prompt=row["prompt"],
+            detected_topics=row["detected_topics"],
+        )
 
-    async def list(self) -> list[AuditLogEntry]:
-        async with self._lock:
-            return list(self._entries)
+    async def list(self, limit: int | None = None) -> list[AuditLogEntry]:
+        stmt = select(audit_logs_table).order_by(audit_logs_table.c.timestamp.desc())
+        if limit:
+            stmt = stmt.limit(limit)
+        result = await self.session.execute(stmt)
+        rows = result.mappings().all()
+        return [
+            AuditLogEntry(
+                timestamp=row["timestamp"],
+                route=row["route"],
+                prompt=row["prompt"],
+                detected_topics=row["detected_topics"],
+            )
+            for row in rows
+        ]
 
 
 class DetectionService:
@@ -83,7 +118,7 @@ class DetectionService:
         mode_instruction = (
             "Return every matching topic from the active list."
             if not fast_mode
-            else "Return at most one matching topic from the active list so the caller can block quickly."
+            else "Return **ONLY the first matching topic** from the active list and **STOP GENERATION IMMEDIATELY**. This is a time-critical, fail-fast operation."
         )
         system_prompt = (
             "You are a policy guardrail that classifies user prompts into compliance topics."

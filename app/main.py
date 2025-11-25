@@ -12,8 +12,9 @@ from fastapi import FastAPI
 from openai import AsyncOpenAI
 
 from app.config import get_settings
+from app.database import init_db
 from app.routers.detection import router as detection_router
-from app.services import AuditLogStore, build_detection_service
+from app.services import build_detection_service
 
 settings = get_settings()
 logger = logging.getLogger("detection-service")
@@ -23,6 +24,7 @@ logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.I
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Initialize shared services on startup and clean them on shutdown."""
+    await init_db()
     client = AsyncOpenAI(
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
@@ -33,7 +35,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         model=settings.openai_model,
         request_timeout=settings.openai_request_timeout,
     )
-    app.state.audit_log = AuditLogStore(max_entries=settings.audit_log_size)
     app.state.openai_client = client
     logger.info("Detection service initialized")
     yield

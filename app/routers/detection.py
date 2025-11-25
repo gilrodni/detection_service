@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_session
 from app.models import AuditLogEntry, DetectionRequest, DetectionResponse
-from app.services import AuditLogStore, DetectionService
+from app.services import AuditLogRepository, DetectionService
 
 router = APIRouter(tags=["detection"])
 
@@ -16,25 +16,20 @@ def get_detection_service(request: Request) -> DetectionService:
     return request.app.state.detection_service
 
 
-def get_audit_log_store(request: Request) -> AuditLogStore:
-    return request.app.state.audit_log
+async def get_audit_repository(
+    session: AsyncSession = Depends(get_session),
+) -> AuditLogRepository:
+    return AuditLogRepository(session)
 
 
 @router.post("/detect", response_model=DetectionResponse, summary="Classify prompt topics")
 async def detect(
     payload: DetectionRequest,
     service: DetectionService = Depends(get_detection_service),
-    audit_log: AuditLogStore = Depends(get_audit_log_store),
+    audit_repo: AuditLogRepository = Depends(get_audit_repository),
 ) -> DetectionResponse:
     topics = await service.detect(payload)
-    await audit_log.append(
-        AuditLogEntry(
-            timestamp=datetime.now(timezone.utc),
-            route="detect",
-            prompt=payload.prompt,
-            detected_topics=topics,
-        )
-    )
+    await audit_repo.record(route="detect", prompt=payload.prompt, topics=topics)
     return DetectionResponse(detected_topics=topics)
 
 
@@ -46,23 +41,16 @@ async def detect(
 async def protect(
     payload: DetectionRequest,
     service: DetectionService = Depends(get_detection_service),
-    audit_log: AuditLogStore = Depends(get_audit_log_store),
+    audit_repo: AuditLogRepository = Depends(get_audit_repository),
 ) -> DetectionResponse:
     topics = await service.detect(payload, fast_mode=True)
-    await audit_log.append(
-        AuditLogEntry(
-            timestamp=datetime.now(timezone.utc),
-            route="protect",
-            prompt=payload.prompt,
-            detected_topics=topics,
-        )
-    )
+    await audit_repo.record(route="protect", prompt=payload.prompt, topics=topics)
     return DetectionResponse(detected_topics=topics)
 
 
 @router.get("/logs", response_model=list[AuditLogEntry], summary="Retrieve audit logs")
 async def logs(
-    audit_log: AuditLogStore = Depends(get_audit_log_store),
+    audit_repo: AuditLogRepository = Depends(get_audit_repository),
 ) -> list[AuditLogEntry]:
-    return await audit_log.list()
+    return await audit_repo.list()
 

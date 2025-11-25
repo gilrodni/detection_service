@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         env="OPENAI_API_KEY",
     )
     openai_base_url: str = Field(
-        "https://api.openai.com/v1", env="OPENAI_BASE_URL"
+        ..., env="OPENAI_BASE_URL"
     )
     openai_model: str = Field("gpt-4.1", env="OPENAI_MODEL")
     openai_request_timeout: float = Field(8.0, env="OPENAI_REQUEST_TIMEOUT")

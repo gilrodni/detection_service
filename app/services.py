@@ -7,9 +7,9 @@ import logging
 from collections import deque
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
-from anyio import Lock, to_thread
-from openai import OpenAI  
-from openai.types.chat import ChatCompletion  
+from anyio import Lock
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletion
 
 from app.models import AuditLogEntry, DetectionRequest, TopicName
 
@@ -37,7 +37,7 @@ class DetectionService:
 
     def __init__(
         self,
-        client: OpenAI,
+        client: AsyncOpenAI,
         topics: dict[str, str],
         model: str,
         request_timeout: float | None = None,
@@ -102,16 +102,14 @@ class DetectionService:
         )
 
         try:
-            completion: ChatCompletion = await to_thread.run_sync(
-                lambda: self._client.chat.completions.create(
-                    model=self._model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0,
-                    timeout=self._request_timeout,
-                )
+            completion: ChatCompletion = await self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0,
+                timeout=self._request_timeout,
             )
         except Exception as exc:  # pragma: no cover - network failure path
             logger.warning("LLM classification failed: %s", exc)
@@ -149,7 +147,7 @@ class DetectionService:
 
 
 def build_detection_service(
-    client: OpenAI,
+    client: AsyncOpenAI,
     topics: dict[str, str],
     model: str,
     request_timeout: float | None,

@@ -46,9 +46,11 @@ FastAPI application that classifies user prompts into policy topics (healthcare,
    DB_NAME=detection
    ```
 3. **Run locally**
-   ```bash
-   uvicorn app.main:app --reload
-   ```
+   - Start Postgres first (either via `docker-compose up db` or `docker-compose up` and stop the API container).
+   - Point your `.env` to that DB and then launch the API directly:
+     ```bash
+     uvicorn app.main:app --reload
+     ```
 4. **Play with the API**
    - Swagger: `http://localhost:8000/docs`
    - Health: `http://localhost:8000/health`
@@ -77,13 +79,21 @@ curl -s -X POST http://localhost:8000/detect \
 ```
 
 ## Trade-offs
-1. **Single LLM call per request** – Keeps the implementation simple but `/protect` cannot literally stream the first topic; instead it instructs the LLM to return at most one topic. A streaming API or multi-prompt fan-out could further cut latency.
-2. **Prompt storage** – Logs store the full prompt text by design; downstream deployments should add redaction/encryption if sensitive data could appear.
-3. **Keyword fallback** – Ensures deterministic behavior when the LLM misbehaves, though accuracy is limited versus the model. Adding evaluation + retraining would improve confidence.
+1. **Postgres persistence vs. latency** – Writing every call to Postgres adds a few extra ms but guarantees durable, centralized logs even when multiple API pods run behind the same DB.
+2. **Full prompt storage** – Keeping the entire prompt meets the assignment requirements but increases storage footprint; redact or encrypt if you handle sensitive data.
+
 
 ## Next steps
-1. Add automated tests that stub the OpenAI client plus contract tests for the keyword fallback.
-2. Implement caching / batching for repeated prompts to reduce cost and latency.
-3. Introduce observability hooks (structured logging & tracing) plus configurable SLAs for `/protect`.
-4. Add encryption at rest / field-level masking if prompts contain sensitive data.
 
+1. Add caching (like Redis) for repeated prompts to make responses faster and cheaper.
+2. Save logs to a temporary place first (file or Redis), and let another process write them to the database so requests don’t get blocked.
+3. Improve the fallback logic (for example more keywords, better rules)
+4. Add functional tests.
+5. Measure precision and recall using labeled data.
+4. Tweak the prompts so the model sticks to the JSON format and handles edge cases better.
+5. Add basic security: HTTPS, login/permissions, and safe handling of secrets.
+6. Set up CI/CD and a simple cloud deployment (infrastructure, health checks, scaling).
+7. Let each customer customize their own topics.
+8. Implement rate limiting per user/IP to prevent abuse and avoid hitting API rate limits.
+9. Add retries logic.
+10. Evaluate different model sizes and pick the best tradeoff between cost, speed, and accuracy. Consider using an ensemble if needed.
